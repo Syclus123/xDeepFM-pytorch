@@ -19,9 +19,9 @@ from torch.utils.tensorboard import SummaryWriter
 import time
 from datetime import datetime
 
-from deepctr_torch.inputs import SparseFeat, DenseFeat, get_feature_names
-from deepctr_torch.models import xDeepFM
-from deepctr_torch.callbacks import EarlyStopping, ModelCheckpoint
+from deepctr.inputs import SparseFeat, DenseFeat, get_feature_names
+from deepctr.models import xDeepFM
+from deepctr.callbacks import EarlyStopping, ModelCheckpoint
 
 
 # ---------------------------
@@ -280,7 +280,6 @@ def build_model(
         loss="binary_crossentropy",
         metrics=["binary_crossentropy", "auc"],
     )
-    # 手动设置学习率
     for param_group in model.optim.param_groups:
         param_group['lr'] = learning_rate
     return model
@@ -302,10 +301,10 @@ def read_criteo_test(path: str, sparse_features: List[str], dense_features: List
 
 def run_eval(args):
     """
-    Eval mode: 使用完整数据集训练，类似官方main.py的方式
-    - train_file (data_path): 用于训练
-    - eval_file (eval_path): 用于验证（每个epoch后评估）
-    - test_file (test_path): 可选，用于推理预测（无标签）
+    Eval mode: 完整
+    - train_file (data_path): 训练
+    - eval_file (eval_path): 验证
+    - test_file (test_path): 测试
     """
     set_seed(args.seed)
     
@@ -323,7 +322,6 @@ def run_eval(args):
     dense_features = [f"I{i}" for i in range(1, 14)]
     target = "label"
 
-    # 读取训练数据
     print(f"[INFO] Loading train data from: {args.data_path}")
     train_df = read_criteo_like(args.data_path)
     print(f"[DEBUG] Train data shape: {train_df.shape}")
@@ -345,7 +343,6 @@ def run_eval(args):
     elif train_pos_ratio == 1.0:
         print("[ERROR] All labels are 1! Check data file format!")
 
-    # 读取验证数据
     eval_df = None
     if args.eval_path:
         print(f"[INFO] Loading eval data from: {args.eval_path}")
@@ -366,14 +363,13 @@ def run_eval(args):
         )
         print(f"[DEBUG] After split - Train: {len(train_df)}, Eval: {len(eval_df)}")
 
-    # 读取测试数据（无标签，用于推理）
     test_df = None
     if args.test_path:
         print(f"[INFO] Loading test data from: {args.test_path}")
         test_df = read_criteo_test(args.test_path, sparse_features, dense_features)
         print(f"[DEBUG] Test data shape (no label): {test_df.shape}")
 
-    # 合并train和eval用于fit encoders/scaler（保持和官方一致）
+    # 合并train和eval用于fit encoders/scaler
     all_labeled_df = pd.concat([train_df, eval_df], axis=0, ignore_index=True)
     print(f"[INFO] Total labeled samples for fitting encoders: {len(all_labeled_df)}")
 
@@ -386,7 +382,6 @@ def run_eval(args):
     train_df_processed = all_labeled_df.iloc[:len(train_df)].copy()
     eval_df_processed = all_labeled_df.iloc[len(train_df):].copy()
 
-    # 处理测试数据（如果有）
     test_df_processed = None
     if test_df is not None:
         test_df_processed, _, _ = prepare_features(
@@ -423,7 +418,6 @@ def run_eval(args):
 
     callbacks = [
         TensorBoardCallback(log_dir=tb_log_dir),
-        EarlyStopping(monitor="val_auc", patience=args.patience, mode="max", verbose=1),
         ModelCheckpoint(
             filepath=ckpt_path,
             monitor="val_auc",
@@ -433,6 +427,12 @@ def run_eval(args):
             verbose=1,
         ),
     ]
+    
+    if args.use_early_stopping:
+        print(f"[INFO] Early stopping enabled with patience={args.patience}")
+        callbacks.insert(1, EarlyStopping(monitor="val_auc", patience=args.patience, mode="max", verbose=1))
+    else:
+        print(f"[INFO] Early stopping disabled - will train for full {args.epochs} epochs")
 
     print(f"\n[INFO] Starting training...")
     print(f"  - Train samples: {len(train_df_processed)}")
@@ -466,7 +466,7 @@ def run_eval(args):
     print(f"[Eval] eval AUC     = {eval_auc:.6f}")
     print(f"[Eval] Training time: {training_time:.2f} seconds ({training_time/60:.2f} minutes)")
 
-    # 对测试数据进行推理（如果有）
+    # 对测试数据进行推理
     test_predictions = None
     if test_df_processed is not None:
         print(f"\n[INFO] Running inference on test data ({len(test_df_processed)} samples)...")
@@ -491,10 +491,9 @@ def run_eval(args):
                  "feature_names": feature_names},
                 os.path.join(args.out_dir, "preprocess.joblib"))
 
-    # save final(best) weights
+    # best weights
     torch.save(model.state_dict(), os.path.join(args.out_dir, "xdeepfm_weights.pth"))
 
-    # save training history
     with open(os.path.join(args.out_dir, "history.json"), "w", encoding="utf-8") as f:
         json.dump(history.history, f, ensure_ascii=False, indent=2)
     
@@ -521,6 +520,7 @@ def run_eval(args):
         "training_config": {
             "epochs": args.epochs,
             "batch_size": args.batch_size,
+            "use_early_stopping": args.use_early_stopping,
             "patience": args.patience,
             "seed": args.seed,
             "learning_rate": args.learning_rate,
@@ -621,7 +621,6 @@ def run_final(args):
         loss="binary_crossentropy",
         metrics=[],  # final mode does not use metrics, to avoid warnings/errors due to single-class batches
     )
-    # 手动设置学习率
     for param_group in model.optim.param_groups:
         param_group['lr'] = args.learning_rate
 
@@ -651,7 +650,6 @@ def run_final(args):
     
     print(f"\n[Final] Training time: {training_time:.2f} seconds ({training_time/60:.2f} minutes)")
 
-    # 将配置信息记录到 TensorBoard
     tb_writer = SummaryWriter(log_dir=tb_log_dir)
     tb_writer.add_text('Model/Config', str(vars(args)), 0)
     tb_writer.close()
@@ -666,7 +664,6 @@ def run_final(args):
     with open(os.path.join(args.out_dir, "history_full.json"), "w", encoding="utf-8") as f:
         json.dump(history.history, f, ensure_ascii=False, indent=2)
     
-    # 保存完整的训练日志
     training_log = {
         "mode": "final",
         "timestamp": timestamp,
@@ -707,10 +704,6 @@ def run_final(args):
     print(f"\n[INFO] 查看TensorBoard: tensorboard --logdir={tb_log_dir}")
 
 
-# ---------------------------
-# Main
-# ---------------------------
-
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--data_path", type=str, required=True, help="Path to train data (train-labeled.txt)")
@@ -735,7 +728,8 @@ def parse_args():
 
     # eval-only
     p.add_argument("--val_size", type=float, default=0.1, help="Validation split ratio (used when --eval_path not provided)")
-    p.add_argument("--patience", type=int, default=50)
+    p.add_argument("--use_early_stopping", action="store_true", help="Enable early stopping (default: False)")
+    p.add_argument("--patience", type=int, default=50, help="Early stopping patience (only used when --use_early_stopping is set)")
     p.add_argument("--stratify", action="store_true", help="Stratified split by label")
     p.add_argument("--verbose", type=int, default=1, choices=[0, 1, 2],
                help="0=silent, 1=progress bar(tqdm), 2=one line per epoch")

@@ -1,6 +1,7 @@
 from .wdl import WDL
 from .deepfm import DeepFM
 from .xdeepfm import xDeepFM
+from .xdeepfm_attn import xDeepFMAttention, xDeepFMAttentionV2
 from .afm import AFM
 from .difm import DIFM
 from .ifm import IFM

@@ -728,7 +728,7 @@ def parse_args():
     p.add_argument("--embedding_dim", type=int, default=10)
     p.add_argument("--l2_reg_embedding", type=float, default=1e-5)
     p.add_argument("--l2_reg_dnn", type=float, default=1e-5)
-    p.add_argument("--dnn_dropout", type=float, default=0.0)
+    p.add_argument("--dnn_dropout", type=float, default=0.5)
     p.add_argument("--learning_rate", type=float, default=0.001)
     p.add_argument("--optimizer", type=str, default="adam", choices=["adam", "adagrad", "sgd"])
 
